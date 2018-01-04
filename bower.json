@@ -1,0 +1,32 @@
+{
+  "name": "Eliza",
+  "authors": ["Cockroach54"],
+  "description": "",
+  "main": "",
+  "license": "MIT",
+  "homepage": "",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "materialize": "^0.100.2"
+  },
+  "install":{
+    "options": {
+      "includePackageNameInInstallPath": false
+    },
+    "base":"static",
+    "path":{
+      "css":"css",
+      "js":"js",
+      "eot": "fonts",
+      "svg": "fonts",
+      "ttf": "fonts",
+      "woff": "fonts"
+    }
+  }
+}

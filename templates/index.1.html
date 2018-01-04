@@ -1,0 +1,417 @@
+<HTML>
+<HEAD>
+  <TITLE>Bonobot</TITLE>
+  
+  <!--Import jQuery before materialize.js-->
+  <script type="text/javascript" src="https://code.jquery.com/jquery-3.2.1.min.js"></script>
+  <!--Import Google Icon Font-->
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <!-- Compiled and minified CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/0.100.2/css/materialize.min.css">
+  <!-- Compiled and minified Javascript -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/0.100.2/js/materialize.min.js"></script>
+  
+  <!-- for socketio -->
+  <script type="text/javascript" src="//cdnjs.cloudflare.com/ajax/libs/socket.io/1.3.6/socket.io.min.js"></script>
+  
+  <!-- custom code load -->
+	<script type="text/javascript" src="{{ url_for('static', filename='js/elizabot.js') }}"></script>
+	<script type="text/javascript" src="{{ url_for('static', filename='js/elizadata.js') }}"></script>
+  <script type='text/javascript' src="//d3js.org/d3.v4.min.js"></script>
+  <script type='text/javascript' src="{{ url_for('static', filename='js/index.js') }}"></script>
+  <script type='text/javascript' src="{{ url_for('static', filename='js/phaseRule.js') }}"></script>
+  <!-- custom css는 가장 나중에 로드해야함 -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <!--Let browser know website is optimized for mobile-->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+</HEAD>
+
+<body onload="bodyOnload()">
+  <div class="row" id="chat">
+
+  <div class="row" style="height:7.5%">
+    <nav>
+      <div class="nav-wrapper">
+        <div class="col s2"><img src="../static/img/logo.png" style="height:100%"></div>
+        <a class="logo" style="color:white">Bonobot<span id="phaseChecker">.</span></a>
+      </div>
+    </nav>
+
+    <!-- <div class="progress">
+      <div class="determinate" id='pBar'></div>
+    </div> -->
+  </div>
+
+  <div class='row' style="height:83%">
+    <div class="col s12" id='eliza'>
+      <!-- chat plsplay -->      
+      <div id='display'></div>
+    </div>
+  </div>
+  
+  <!-- user input -->
+  <div class="row valign-wrapper input-field" id="inputWrapper" style="height:8%">
+    <INPUT class="col s10 offset-s1" id="input" type="text" AUTOCOMPLETE="off"/>
+    <!-- <a class="waves-effect waves-light btn col s2" id="rcpBtn">send</a> -->
+  </div>
+</div>
+
+  <!-- development log below here -->
+<div class="container" id="dev" style="display: none">
+
+  <label>request to front directly</label>
+  <div class="row">
+    <a class="waves-effect waves-light btn" id="rcpBtn">send to rcp</a>
+    <a class="waves-effect waves-light btn" id="saveBtn">save dialogue</a>
+  </div>
+
+  <label>request to Flask server</label>
+  <div class="row">
+    <a class="waves-effect waves-light btn" id='saveMongo'>save dialogue at mongo</a>
+    <a class="waves-effect waves-light btn" id='classify'>classify</a>
+    <!-- <a class="waves-effect waves-light btn" id='saveSql'>save dialogue at sqlite</a> -->
+  </div>
+
+  <hr/>
+  <div class='row'>
+    <div class="col s6"><label>category</label><input id='label'></input></div>
+    <div class="col s2"><label>phase</label><input id='phase'></input></div>
+    <div class="col s4"><label>OCAR</label><input id='ocar'></input></div>
+    <div class="col s12"><label>ocarMem</label><input id='ocarMem'></input></div>
+    <div class="col s12"><label>pre input</label><input id='pre'></input></div>
+    <div class="col s12"><label>modified input</label><input id='refine'></input></div>
+  </div>
+
+  <label>liwc top3 category</label>
+  <div class="row">
+    <div class="col s4"><input class="liwc"/></div>
+    <div class="col s4"><input class="liwc"/></div>
+    <div class="col s4"><input class="liwc"/></div>
+    <div class="liwc col s12" id="d3">
+      <svg></svg>
+    </div>
+  </div>
+
+</div>
+
+<!-- js below here -->
+<script LANGUAGE="Javascript" TYPE="text/javascript" charset="utf-8">
+  function bodyOnload(){
+    if(devFlag){  // development mode
+      devMode();
+      // phaseState = 1;
+      // oqCnt = 1;
+    }
+    window.setTimeout('elizaReset()',500);
+    socket.emit('message', {data: '*****New client loged in.*****', type: 'notice'});
+  }
+
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+  
+  var eliza = new ElizaBot();
+  var elizaLines = new Array();
+  
+  function elizaReset() {
+    eliza.reset();
+    elizaLines.length = 0;
+    // elizadata.js load시간 조금 필요
+    var g = guides[guideCnt];
+    var balloon = makeBalloon(g, 0);
+    document.getElementById('display').appendChild(balloon);
+    guideCnt++;
+    // sleep(200).then(elizaStep());
+  }
+  
+  var input = document.getElementById('input');  
+  var userLogMem = [];
+  var elizaLogMem = [];
+  var ctgMem = [];
+  var removedRules = [];
+  var cursor = 0;
+  var endFlag = false;
+  var timeoverFlag = false; // timeover시에 'O'만 뽑히도록 설정
+  var guideCnt = 0;
+  var oqCnt = 0;
+  var endCnt = 0;
+  var timeover; // timeoutID
+  var input_pre; // timeout시에 이전 인풋값 저장한거 로드
+  var domain; // liwc top3 cetegory 저장 array[3]
+  var startTime;
+  var endTime = new Date();
+  var theme;
+  
+  // 이게 메인루프
+  async function elizaStep() {
+    var userinput = timeoverFlag? input_pre: input.value; input.value="";// 타임오버시 앞에 말 저장한거 불러오기 
+    var userinput_modi;
+    var display = document.getElementById('display');
+    var rpl;
+    var balloon;
+    var balloon_u;
+    var hasStop = new RegExp(/\.+$|\?+$/); // 마지막 마침표 물음표 다시 붙이기
+    toggleProgress();    
+
+    // 마지막 마침표 물음표 찾기
+    var temp_userinput = userinput.split(" ");
+    var stop_res = [];
+    temp_userinput.forEach(function(el,id){
+      stop_res.push(hasStop.exec(el));
+    });
+
+    // refine 후 차트그리기 후 transform
+    var sentense_all;
+    reqRefine(userinput)
+        .then(sentense_modi=>{
+          // 마지막 마침표 물음표 다시 붙이기
+          var temp_sentense_modi = sentense_modi.split(" ");
+          temp_sentense_modi.forEach(function(el,id){
+            if(temp_sentense_modi.length == stop_res.length){
+              if(stop_res[id]){
+                temp_sentense_modi[id] = el+stop_res[id][0];
+              }
+            }
+          });
+          userinput_modi = temp_sentense_modi.join(" ");
+          
+          document.getElementById('refine').value = userinput_modi;
+          console.log('before:',userinput,'\nRefined:',userinput_modi);
+
+          sentense_all = userLogMem.join('. ');          
+        })
+        .then(afterAsync)
+        .then(()=>{postContents(sentense_all);})
+        .then(res=>{drawChart(res.receptiviti_scores.percentiles);})
+        .catch(err=>console.error(err));
+      
+
+    
+    function afterAsync(){
+      if (userinput != '') {
+        // 대화 문장 수로 Phase 체크 후 변경
+        checkPhase(elizaLogMem.length);
+        document.getElementById('phase').value = phaseState;
+        // 페이즈룰 적용
+        if(phaseState==0){
+          if(guides[guideCnt] && guides[guideCnt].indexOf('@')>-1){
+            // 이름설정
+            startTime = new Date();
+            var u = userinput.split(' ');
+            user = /\w/.test(u[u.length-1])? u[u.length-1]: u[u.length-2]; // 혹시나 마지막에 특수문자 있을까 거름
+            user = user.replace(/\.$/, ''); 
+            user = user[0].toUpperCase() + user.slice(1);
+            guides[guideCnt] = guides[guideCnt].replace('@', user);          
+          }
+          // please type “OK”.
+          if(guideCnt==guides.length-1){
+            if(userinput.toLowerCase().indexOf('ok')>-1) phaseState = 1;
+            else{
+              toggleProgress();
+              input.focus();
+              return;
+            }
+          }
+          rpl = guides[guideCnt];
+          balloon =makeBalloon(rpl,0);
+          guideCnt++;
+        }
+        else if(phaseState==1){
+          if(oqCnt==oqs.length-1){  // talking about?
+            theme = userinput;
+            theme = theme.replace(/\W+$/g, ''); // \\?, really\\? 걸리는데서 안빠지게 특수문자 제거
+            var re = new RegExp(/about\s?/i); // about 뒤에 글만 살림
+            var mdl = re.exec(theme);
+            if(mdl) theme = theme.substr(mdl[0].length + mdl['index']);
+          }
+          rpl = oqs[oqCnt];
+          balloon =makeBalloon(rpl,0);
+          oqCnt++;
+        }
+        else if(phaseState==2 || phaseState==3){
+          rpl = eliza.transform(userinput_modi);
+          console.log(rpl);
+          balloon =makeBalloon(rpl,0);                
+        }
+        else if(phaseState==4){
+          //ending with Affirmation
+          if(ocarMem[ocarMem.length-1]==2) endFlag=true;
+
+          if(endFlag){
+            rpl = ends[endCnt]? ends[endCnt]:'Bonobot has left the chat.';
+            // final summary
+            if(ends[endCnt] && ends[endCnt].indexOf('@')>-1){
+              console.log(theme);
+              theme = eliza.transform("afghans "+theme);
+              console.log(theme);              
+              rpl = rpl.replace('@', theme);
+              // rpl = rpl.replace(/about \"about/i, 'about "');
+            }
+            balloon =makeBalloon(rpl,0);          
+            // 대화 끝나면 자동 저장
+            if(endCnt == ends.length-1){
+              endTime = new Date();
+              reqSaveMongo().then(res=>console.log('### Sucessfully saved to mongoDB: ',res,'###'));
+            }
+            endCnt++; 
+          }
+          else{
+            rpl = eliza.transform(userinput_modi);
+            console.log(rpl);
+            balloon = makeBalloon(rpl,0);          
+          }
+        }  
+
+        // // classify OQ guide dialogues
+        // if(userLogMem.length == oqs.length){
+        //   // 전체 대화로 분류
+        //   eliza.category = getCategory(user, userLogMem);
+        // }
+
+        // 메모리에 대화 기록  
+        if(!timeoverFlag){ // 자동으로 넘어갈땐 렌더링 안함
+          userLogMem.push(userinput);
+          getCategory(user, [userinput]);
+
+          cursor=userLogMem.length;
+          // user balloon 렌더링        
+          elizaLines.push(userinput);
+          balloon_u = makeBalloon(userinput,1);
+          display.appendChild(balloon_u);        
+        }
+        elizaLines.push(rpl);
+        elizaLogMem.push(rpl);
+
+        // loader 렌더링
+        setTimeout(function(){
+          var loader = makeBalloon(null, 2);
+          display.appendChild(loader);
+          display.scrollTop = display.scrollHeight; // 마지막 대화로 스크롤 내리기           
+        },500);
+        // eliza balloon 렌더링
+        setTimeout(function(){
+          display.removeChild(document.getElementById('loader'));
+          display.appendChild(balloon);
+          toggleProgress();
+          display.scrollTop = display.scrollHeight; // 마지막 대화로 스크롤 내리기        
+        },elizaDelay);
+      }
+      if(!timeoverFlag) input_pre = userinput;  // phase4 연속 자동 생성 위해서
+      document.getElementById('ocarMem').value = ocarMem.join(' ');
+      document.getElementById('pre').value = input_pre;
+
+      input.focus();
+      display.scrollTop = display.scrollHeight; // 마지막 대화로 스크롤 내리기 
+      // control timeover differently according to phase           
+      if(phaseState==2 || phaseState==3){
+        if(ocarMem[ocarMem.length-1]==2 || ocarMem[ocarMem.length-1]==3) timeCheck(userDelay); // AR -> OC
+      }
+      // else if(phaseState==3){
+      //   if(ocarMem[ocarMem.length-1]==2 || ocarMem[ocarMem.length-1]==3) timeCheck(userDelay); // AR -> OC        
+      // }
+      else if(phaseState==4 && endCnt<=1 && ocarMem[ocarMem.length-1]>=2) timeCheck(userDelay);
+      else if(phaseState==4 && endCnt==3) timeCheck(userDelay);
+      else if(phaseState==4 && endCnt==4) timeCheck(userDelay);
+      console.log('=================================');
+    }
+  }
+
+  // user 답변 없으면 시간체크 후 엘리자 한번 더 말하기
+  function timeCheck(sec){
+    console.log('TIMECHECK STARTED');
+    timeover = setTimeout(function(){
+      console.log('~~~~~~TIME OVER~~~~~');
+      var temp = input.value;
+      timeoverFlag = true;
+      elizaStep()
+      input.value = temp;
+    }, sec);
+  }
+
+// ----------- code for UI by Cockroach -----------
+  input.addEventListener('keydown', function(e){
+    if(timeover){
+      window.clearTimeout(timeover);
+      timeoverFlag = false;
+      console.log("TIMECHECK STOPPED");
+    }  
+  });
+
+  input.addEventListener('keyup', function(e){
+    // if(!timeover) timeCheck(7000);
+    // console.log(e.keyCode);
+    if(e.keyCode === 38 && cursor>0){
+      cursor--;
+      e.target.value = userLogMem[cursor]; // cursor = userLogMem.length
+    }
+    else if(e.keyCode === 40 && cursor<userLogMem.length-1){
+      cursor++;
+      e.target.value = userLogMem[cursor]; // cursor = userLogMem.length
+    }
+    else if(e.keyCode === 13){
+      if(input.value!="") elizaStep();
+    }
+  });
+
+  input.addEventListener('focusout', function(e){
+    cursor = userLogMem.length;
+  });
+
+// ------------
+  // document.getElementById('rcpBtn').addEventListener('click', function(e){
+  //   var sentense = userLogMem.join('. ');
+  //   console.log('All sentense:',sentense);
+  //   postContents(sentense).then(res=>drawChart(res.receptiviti_scores.percentiles));
+  // });
+
+  // deprecated
+  // document.getElementById('saveBtn').addEventListener('click', function(e){
+  //   var sentense = userLogMem.join('. ');
+  //   console.log('All sentense:',sentense);
+  //   postContents(sentense).then(res=>drawChart(res.receptiviti_scores.percentiles));
+  // });
+
+// -------------
+  document.getElementById('saveMongo').addEventListener('click', function(e){
+    console.log('clicked saveMongo btn');
+    // var sentense = userLogMem.join('. ');
+    reqSaveMongo().then(res=>console.log('Sucessfully saved to mongoDB: ',res));
+  });
+
+  // document.getElementById('saveSql').addEventListener('click', function(e){
+  //   console.log('clicked saveSql btn');
+  // });
+
+  document.getElementById('classify').addEventListener('click', function(e){
+    console.log('clicked classify btn');
+    // 전체 대화내용에 관해 분류
+    getCategory(user, userLogMem); 
+  });
+
+  function getCategory(user, userLogMem){
+    reqClassify(user, userLogMem)
+      .then(res=>{
+            res = res*1;  // str -> int
+            console.log('*****Dialog is classified as:',res,'*****');      
+            var label = document.getElementById('label');
+            // eliza.category = res; // 아직 분류값 반영 중지
+            if(res == 0) _res = 'Emotional';
+            else if(res == 1) _res = 'Infomational';
+            else  _res = 'Others';
+            label.value = _res;
+            ctgMem.push(_res);
+            return res;
+      })
+      .catch(err=>console.error(err));
+  }
+
+  //dev heatkey
+  document.querySelector('a.logo').addEventListener('click', function(){
+    devMode();
+    setEliza(4,4,1);
+    elizaDelay=1000;
+  });
+</script>
+
+</body>
+</HTML>

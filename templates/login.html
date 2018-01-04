@@ -1,0 +1,22 @@
+<head>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <!-- <h3>sign in page</h3>
+  <lable>name</lable><input id="signIn_name" type:text>
+  <lable>pw</lable><input type:text>
+  <button id='signIn'>sign up</button>
+  <hr/> -->
+  
+  <h3>Log in page</h3>
+  <lable>name</lable><input id="logIn_name" type:text placeholder="Enter your name">
+  <br/><lable>counselor</lable><input id="counselor" type:text placeholder="Eliza">
+  <!-- <lable>pw</lable><input type:text> -->
+  <button id='logIn'>log in</button>
+  <!-- <a href="/index"><button id='logIn'>log in</button></a>   -->
+  <hr/> 
+
+  <h3>for developmet</h3>
+  <button id='getPerson'>getPerson</button>
+</body>
+<script type="text/javascript" src="{{ url_for('static', filename='js/login.js') }}"></script>
